@@ -11,6 +11,8 @@ import (
 	"github.com/franela/goreq"
 )
 
+var ErrNoGenres = fmt.Errorf("couldn't find any genres")
+
 var query string
 
 func init() {
@@ -35,7 +37,7 @@ func main() {
 		case 2:
 			artist, album = parts[0], parts[1]
 		default:
-			log.Fatalln("cannot parse query")
+			log.Fatalln("couldn't parse query")
 		}
 		ag, err := AlbumGenres(artist, album)
 		if err != nil {
@@ -45,6 +47,8 @@ func main() {
 	}
 }
 
+// AlbumGenres searches Wikipedia for album page and scrapes genres from it. At
+// least one of artist or album must be given.
 func AlbumGenres(artist, album string) ([]string, error) {
 	for _, variant := range searchVariants(artist, album) {
 		gs, err := genres(variant)
@@ -55,7 +59,7 @@ func AlbumGenres(artist, album string) ([]string, error) {
 			return gs, nil
 		}
 	}
-	return nil, fmt.Errorf("couldn't find any genres")
+	return []string{}, ErrNoGenres
 }
 
 func searchVariants(artist, album string) []string {
@@ -140,36 +144,36 @@ func isResponseOK(r *goreq.Response) bool {
 	return !(400 <= r.StatusCode && r.StatusCode < 600)
 }
 
-type SearchResponse struct {
+type searchResponse struct {
 	Query       string
 	Suggestions []string
 	Snippets    []string
 	URIs        []string
 }
 
-func decodeResponse(jsonResp []interface{}) (SearchResponse, error) {
+func decodeResponse(jsonResp []interface{}) (searchResponse, error) {
 	err := func(o interface{}) error {
-		return fmt.Errorf("couldn't assert %#v", o)
+		return fmt.Errorf("unable to assert %#v", o)
 	}
 
 	query, ok := jsonResp[0].(string)
 	if !ok {
-		return SearchResponse{}, err(jsonResp[0])
+		return searchResponse{}, err(jsonResp[0])
 	}
 	suggestions, ok := interfaceToStringSlice(jsonResp[1])
 	if !ok {
-		return SearchResponse{}, err(jsonResp[1])
+		return searchResponse{}, err(jsonResp[1])
 	}
 	snippets, ok := interfaceToStringSlice(jsonResp[2])
 	if !ok {
-		return SearchResponse{}, err(jsonResp[2])
+		return searchResponse{}, err(jsonResp[2])
 	}
 	urls, ok := interfaceToStringSlice(jsonResp[3])
 	if !ok {
-		return SearchResponse{}, err(jsonResp[3])
+		return searchResponse{}, err(jsonResp[3])
 	}
 
-	return SearchResponse{query, suggestions, snippets, urls}, nil
+	return searchResponse{query, suggestions, snippets, urls}, nil
 }
 
 func interfaceToStringSlice(obj interface{}) ([]string, bool) {

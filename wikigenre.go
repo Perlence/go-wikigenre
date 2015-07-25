@@ -1,11 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"log"
 	"net/url"
+	"os"
+	"regexp"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/franela/goreq"
@@ -17,34 +22,117 @@ var query string
 
 func init() {
 	const queryUsage = "fetch genres for given albums [artist - ]album(; [artist - ]album)*"
-	flag.StringVar(&query, "query", "", queryUsage)
-	flag.StringVar(&query, "q", "", queryUsage+" (shorthand)")
+	flag.StringVar(&query, "q", "", queryUsage)
 }
 
 func main() {
 	flag.Parse()
 
-	if query == "" {
-		log.Fatalln("query is required")
-	}
+	if query != "" {
+		for _, artistAlbum := range parseQuery(query) {
+			ag, err := AlbumGenres(artistAlbum.artist, artistAlbum.album)
+			if err != nil {
+				log.Fatalln(err)
+			}
+			fmt.Println(artistAlbum.source + ": " + strings.Join(ag, "; "))
+		}
+	} else {
+		// Read foobar items from stdin.
+		s := bufio.NewScanner(os.Stdin)
+		var lines []string
+		for s.Scan() {
+			line := s.Text()
+			// Look for a zero-length read.
+			if len(line) == 0 {
+				break
+			}
+			lines = append(lines, line)
+		}
+		if err := s.Err(); err != nil {
+			log.Fatalln("error reading stdin:", err)
+		}
 
-	for _, artistalbum := range strings.Split(query, "; ") {
-		parts := strings.SplitN(artistalbum, " - ", 2)
+		var wg sync.WaitGroup
+		m := &sync.Mutex{}
+		wg.Add(len(lines))
+
+		queries := make([]artistAlbum, len(lines))
+		uniqueQueriesMap := make(map[artistAlbum][]string)
+		for i, line := range lines {
+			query := parseQueryFromStdin(line)
+			queries[i] = query
+			go func(q artistAlbum) {
+				defer func() {
+					wg.Done()
+					runtime.Gosched()
+				}()
+
+				if q == (artistAlbum{}) {
+					return
+				}
+
+				m.Lock()
+				_, ok := uniqueQueriesMap[q]
+				if ok {
+					// Don't query if query is already in process.
+					m.Unlock()
+					return
+				}
+				uniqueQueriesMap[q] = nil
+				m.Unlock()
+
+				gs, _ := AlbumGenres(q.artist, q.album)
+				m.Lock()
+				uniqueQueriesMap[q] = gs
+				m.Unlock()
+			}(query)
+		}
+
+		wg.Wait()
+		for _, query := range queries {
+			fmt.Println(strings.Join(uniqueQueriesMap[query], "; "))
+		}
+	}
+}
+
+type artistAlbum struct {
+	source, artist, album string
+}
+
+func parseQuery(query string) []artistAlbum {
+	var result []artistAlbum
+	for _, part := range strings.Split(query, "; ") {
+		parts := strings.SplitN(part, " - ", 2)
 		var artist, album string
 		switch len(parts) {
 		case 1:
-			artist, album = "", artistalbum
+			artist, album = "", part
 		case 2:
 			artist, album = parts[0], parts[1]
 		default:
 			log.Fatalln("couldn't parse query")
 		}
-		ag, err := AlbumGenres(artist, album)
-		if err != nil {
-			log.Fatalln(err)
-		}
-		fmt.Println(artistalbum + ": " + strings.Join(ag, "; "))
+		result = append(result, artistAlbum{part, artist, album})
 	}
+	return result
+}
+
+var foobarItem = regexp.MustCompile(`(?:(.+) - )?\[(.+?)?(?: CD\d+)?(?: #\d+)?\]`)
+
+func parseQueryFromStdin(query string) artistAlbum {
+	matches := foobarItem.FindStringSubmatch(query)
+	if len(matches) == 0 {
+		return artistAlbum{}
+	}
+	both, artist, album := "", matches[1], matches[2]
+	if artist == "" {
+		both = album
+	} else if album == "" {
+		both = artist
+	} else {
+		both = fmt.Sprintf("%s - %s", artist, album)
+	}
+	return artistAlbum{both, artist, album}
 }
 
 // AlbumGenres searches Wikipedia for album page and scrapes genres from it. At
@@ -63,7 +151,7 @@ func AlbumGenres(artist, album string) ([]string, error) {
 }
 
 func searchVariants(artist, album string) []string {
-	variants := []string{}
+	var variants []string
 	if artist != "" && album != "" {
 		variants = append(variants, fmt.Sprintf("%s (%s album)", album, artist))
 	}
@@ -128,7 +216,7 @@ func genres(query string) ([]string, error) {
 	}
 
 	// Scrape genres.
-	result := []string{}
+	var result []string
 	doc.Find("table.haudio td.category>a").Each(genresFromSelection(&result))
 	if len(result) > 0 {
 		return result, nil
@@ -199,7 +287,7 @@ func genresFromSelection(result *[]string) func(int, *goquery.Selection) {
 
 // Title upper-cases only the first letter of each word.
 func title(s string) string {
-	parts := []string{}
+	var parts []string
 	for _, part := range strings.Split(s, " ") {
 		parts = append(parts, strings.ToUpper(part[0:1])+part[1:])
 	}

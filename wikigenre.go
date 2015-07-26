@@ -18,86 +18,40 @@ import (
 
 var ErrNoGenres = fmt.Errorf("couldn't find any genres")
 
+func usage() {
+	fmt.Fprintln(os.Stderr, `usage: go-wikigenre [-h] "[ARTIST - ]ALBUM"( "[ARTIST - ]ALBUM")*`)
+	os.Exit(2)
+}
+
 func main() {
 	flag.Usage = usage
 	flag.Parse()
 	args := flag.Args()
 
+	var artistAlbums []artistAlbum
 	if len(args) > 0 {
-		for _, artistAlbum := range artistAlbumsFromCLI(args) {
-			ag, err := AlbumGenres(artistAlbum.artist, artistAlbum.album)
-			if err != nil {
-				log.Fatalln(err)
-			}
-			fmt.Println(artistAlbum.source + ": " + strings.Join(ag, "; "))
-		}
+		artistAlbums = artistAlbumsFromCLI(args)
 	} else {
-		// Read foobar2k items from stdin.
-		s := bufio.NewScanner(os.Stdin)
-		var lines []string
-		for s.Scan() {
-			line := s.Text()
-			// Look for a zero-length read.
-			if len(line) == 0 {
-				break
-			}
-			lines = append(lines, line)
+		var err error
+		artistAlbums, err = artistAlbumsFromStdin()
+		if err != nil {
+			log.Fatalln("error reading from stdin:", err)
 		}
-		if err := s.Err(); err != nil {
-			log.Fatalln("error reading stdin:", err)
+	}
+
+	gs, errs := multipleAlbumGenres(artistAlbums)
+	if errs != nil {
+		for _, err := range errs {
+			fmt.Fprintln(os.Stderr, err)
 		}
-
-		var wg sync.WaitGroup
-		m := &sync.Mutex{}
-		wg.Add(len(lines))
-
-		queries := make([]artistAlbum, len(lines))
-		uniqueQueriesMap := make(map[artistAlbum][]string)
-		for i, line := range lines {
-			query := artistAlbumsFromStdin(line)
-			queries[i] = query
-			go func(q artistAlbum) {
-				defer func() {
-					wg.Done()
-					runtime.Gosched()
-				}()
-
-				if q == (artistAlbum{}) {
-					return
-				}
-
-				m.Lock()
-				_, ok := uniqueQueriesMap[q]
-				if ok {
-					// Don't query if query is already in process.
-					m.Unlock()
-					return
-				}
-				uniqueQueriesMap[q] = nil
-				m.Unlock()
-
-				gs, _ := AlbumGenres(q.artist, q.album)
-				m.Lock()
-				uniqueQueriesMap[q] = gs
-				m.Unlock()
-			}(query)
-		}
-
-		wg.Wait()
-		for _, query := range queries {
-			fmt.Println(strings.Join(uniqueQueriesMap[query], "; "))
-		}
+	}
+	for _, g := range gs {
+		fmt.Println(strings.Join(g, "; "))
 	}
 }
 
-func usage() {
-	fmt.Fprintln(os.Stderr,
-		"usage: go-wikigenre [-h] [ARTIST - ]ALBUM( [ARTIST - ]ALBUM)*")
-	os.Exit(2)
-}
-
 type artistAlbum struct {
-	source, artist, album string
+	artist, album, both string
 }
 
 func artistAlbumsFromCLI(args []string) []artistAlbum {
@@ -113,15 +67,39 @@ func artistAlbumsFromCLI(args []string) []artistAlbum {
 		default:
 			log.Fatalln("couldn't parse query")
 		}
-		result = append(result, artistAlbum{arg, artist, album})
+		result = append(result, artistAlbum{artist, album, arg})
 	}
 	return result
 }
 
 var foobarItem = regexp.MustCompile(`(?:(.+) - )?\[(.+?)?(?: CD\d+)?(?: #\d+)?\]`)
 
-func artistAlbumsFromStdin(query string) artistAlbum {
-	matches := foobarItem.FindStringSubmatch(query)
+// Read foobar2k items from stdin.
+func artistAlbumsFromStdin() ([]artistAlbum, error) {
+	s := bufio.NewScanner(os.Stdin)
+	var lines []string
+	for s.Scan() {
+		line := s.Text()
+		// Look for a zero-length read.
+		if len(line) == 0 {
+			break
+		}
+		lines = append(lines, line)
+	}
+	if err := s.Err(); err != nil {
+		return nil, err
+	}
+
+	artistAlbums := make([]artistAlbum, len(lines))
+	for i, line := range lines {
+		artistAlbums[i] = parseFoobar2kItem(line)
+	}
+
+	return artistAlbums, nil
+}
+
+func parseFoobar2kItem(item string) artistAlbum {
+	matches := foobarItem.FindStringSubmatch(item)
 	if len(matches) == 0 {
 		return artistAlbum{}
 	}
@@ -133,7 +111,52 @@ func artistAlbumsFromStdin(query string) artistAlbum {
 	} else {
 		both = fmt.Sprintf("%s - %s", artist, album)
 	}
-	return artistAlbum{both, artist, album}
+	return artistAlbum{artist, album, both}
+}
+
+func multipleAlbumGenres(as []artistAlbum) ([][]string, []error) {
+	var wg sync.WaitGroup
+	m := &sync.Mutex{}
+	wg.Add(len(as))
+	uniqueArtistAlbumMap := make(map[artistAlbum][]string)
+	var errs []error
+	for _, aa := range as {
+		go func(q artistAlbum) {
+			defer func() {
+				wg.Done()
+				runtime.Gosched()
+			}()
+
+			if q == (artistAlbum{}) {
+				return
+			}
+
+			m.Lock()
+			_, ok := uniqueArtistAlbumMap[q]
+			if ok {
+				// Don't query if query is already in process.
+				m.Unlock()
+				return
+			}
+			uniqueArtistAlbumMap[q] = nil
+			m.Unlock()
+
+			gs, err := AlbumGenres(q.artist, q.album)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("error finding genres for %s: %s", q.both, err))
+			}
+			m.Lock()
+			uniqueArtistAlbumMap[q] = gs
+			m.Unlock()
+		}(aa)
+	}
+	wg.Wait()
+
+	var result [][]string
+	for _, aa := range as {
+		result = append(result, uniqueArtistAlbumMap[aa])
+	}
+	return result, errs
 }
 
 // AlbumGenres searches Wikipedia for album page and scrapes genres from it. At
@@ -180,7 +203,7 @@ func genres(query string) ([]string, error) {
 		return nil, err
 	}
 	if !isResponseOK(resp) {
-		return nil, fmt.Errorf("search on Wikipedia failed, HTTP status", resp.Status)
+		return nil, fmt.Errorf("search on Wikipedia failed, HTTP status %s", resp.Status)
 	}
 
 	// Decode response.
@@ -208,7 +231,7 @@ func genres(query string) ([]string, error) {
 		return nil, err
 	}
 	if !isResponseOK(resp) {
-		return nil, fmt.Errorf("failed to open Wikipedia page %s, HTTP status", uri, resp.Status)
+		return nil, fmt.Errorf("failed to open Wikipedia page %s, HTTP status %s", uri, resp.Status)
 	}
 
 	doc, err := goquery.NewDocumentFromResponse(resp.Response)

@@ -59,9 +59,9 @@ func main() {
 }
 
 func errorln(arg ...interface{}) {
-	fmt.Fprint(os.Stderr, chalk.Red)
-	fmt.Fprint(os.Stderr, arg...)
-	fmt.Fprint(os.Stderr, chalk.Reset, "\n")
+	fmt.Fprint(colorStderr, chalk.Red)
+	fmt.Fprint(colorStderr, arg...)
+	fmt.Fprint(colorStderr, chalk.Reset, "\n")
 }
 
 type artistAlbum struct {

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"regexp"
@@ -13,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/fatih/color"
 	"github.com/franela/goreq"
 )
 
@@ -36,19 +36,29 @@ func main() {
 		var err error
 		artistAlbums, err = artistAlbumsFromStdin()
 		if err != nil {
-			log.Fatalln("error reading from stdin:", err)
+			color.Set(color.FgRed)
+			fmt.Fprintln(os.Stderr, "error reading from stdin: ", err)
+			color.Unset()
 		}
 	}
 
+	code := 0
 	gs, errs := multipleAlbumGenres(artistAlbums)
 	if errs != nil {
 		for _, err := range errs {
+			color.Set(color.FgRed)
 			fmt.Fprintln(os.Stderr, err)
+			color.Unset()
 		}
+		code = 1
 	}
 	for _, g := range gs {
+		if g == nil {
+			continue
+		}
 		fmt.Println(strings.Join(g, "; "))
 	}
+	os.Exit(code)
 }
 
 type artistAlbum struct {
@@ -65,8 +75,6 @@ func artistAlbumsFromCLI(args []string) []artistAlbum {
 			artist, album = "", arg
 		case 2:
 			artist, album = parts[0], parts[1]
-		default:
-			log.Fatalln("couldn't parse query")
 		}
 		result = append(result, artistAlbum{artist, album, arg})
 	}
@@ -172,7 +180,7 @@ func AlbumGenres(artist, album string) ([]string, error) {
 			return gs, nil
 		}
 	}
-	return []string{}, ErrNoGenres
+	return nil, ErrNoGenres
 }
 
 func searchVariants(artist, album string) []string {

@@ -12,12 +12,15 @@ import (
 	"sync"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/fatih/color"
 	"github.com/franela/goreq"
+	"github.com/shiena/ansicolor"
+	"github.com/ttacon/chalk"
 )
 
 // ErrNoGenres is returned if scraping yields no genres.
 var ErrNoGenres = fmt.Errorf("couldn't find any genres")
+
+var colorStderr = ansicolor.NewAnsiColorWriter(os.Stderr)
 
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage: go-wikigenre [-h] "[ARTIST - ]ALBUM"( "[ARTIST - ]ALBUM")*`)
@@ -36,9 +39,8 @@ func main() {
 		var err error
 		artistAlbums, err = artistAlbumsFromStdin()
 		if err != nil {
-			color.Set(color.FgRed)
-			fmt.Fprintln(os.Stderr, "error reading from stdin: ", err)
-			color.Unset()
+			errorln("error reading from stdin: ", err)
+			os.Exit(1)
 		}
 	}
 
@@ -46,19 +48,20 @@ func main() {
 	gs, errs := multipleAlbumGenres(artistAlbums)
 	if errs != nil {
 		for _, err := range errs {
-			color.Set(color.FgRed)
-			fmt.Fprintln(os.Stderr, err)
-			color.Unset()
+			errorln(err)
 		}
 		code = 1
 	}
 	for _, g := range gs {
-		if g == nil {
-			continue
-		}
 		fmt.Println(strings.Join(g, "; "))
 	}
 	os.Exit(code)
+}
+
+func errorln(arg ...interface{}) {
+	fmt.Fprint(os.Stderr, chalk.Red)
+	fmt.Fprint(os.Stderr, arg...)
+	fmt.Fprint(os.Stderr, chalk.Reset, "\n")
 }
 
 type artistAlbum struct {

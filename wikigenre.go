@@ -18,18 +18,13 @@ import (
 
 var ErrNoGenres = fmt.Errorf("couldn't find any genres")
 
-var query string
-
-func init() {
-	const queryUsage = "fetch genres for given albums [artist - ]album(; [artist - ]album)*"
-	flag.StringVar(&query, "q", "", queryUsage)
-}
-
 func main() {
+	flag.Usage = usage
 	flag.Parse()
+	args := flag.Args()
 
-	if query != "" {
-		for _, artistAlbum := range parseQuery(query) {
+	if len(args) > 0 {
+		for _, artistAlbum := range artistAlbumsFromCLI(args) {
 			ag, err := AlbumGenres(artistAlbum.artist, artistAlbum.album)
 			if err != nil {
 				log.Fatalln(err)
@@ -37,7 +32,7 @@ func main() {
 			fmt.Println(artistAlbum.source + ": " + strings.Join(ag, "; "))
 		}
 	} else {
-		// Read foobar items from stdin.
+		// Read foobar2k items from stdin.
 		s := bufio.NewScanner(os.Stdin)
 		var lines []string
 		for s.Scan() {
@@ -59,7 +54,7 @@ func main() {
 		queries := make([]artistAlbum, len(lines))
 		uniqueQueriesMap := make(map[artistAlbum][]string)
 		for i, line := range lines {
-			query := parseQueryFromStdin(line)
+			query := artistAlbumsFromStdin(line)
 			queries[i] = query
 			go func(q artistAlbum) {
 				defer func() {
@@ -95,31 +90,37 @@ func main() {
 	}
 }
 
+func usage() {
+	fmt.Fprintln(os.Stderr,
+		"usage: go-wikigenre [-h] [ARTIST - ]ALBUM( [ARTIST - ]ALBUM)*")
+	os.Exit(2)
+}
+
 type artistAlbum struct {
 	source, artist, album string
 }
 
-func parseQuery(query string) []artistAlbum {
+func artistAlbumsFromCLI(args []string) []artistAlbum {
 	var result []artistAlbum
-	for _, part := range strings.Split(query, "; ") {
-		parts := strings.SplitN(part, " - ", 2)
+	for _, arg := range args {
+		parts := strings.SplitN(arg, " - ", 2)
 		var artist, album string
 		switch len(parts) {
 		case 1:
-			artist, album = "", part
+			artist, album = "", arg
 		case 2:
 			artist, album = parts[0], parts[1]
 		default:
 			log.Fatalln("couldn't parse query")
 		}
-		result = append(result, artistAlbum{part, artist, album})
+		result = append(result, artistAlbum{arg, artist, album})
 	}
 	return result
 }
 
 var foobarItem = regexp.MustCompile(`(?:(.+) - )?\[(.+?)?(?: CD\d+)?(?: #\d+)?\]`)
 
-func parseQueryFromStdin(query string) artistAlbum {
+func artistAlbumsFromStdin(query string) artistAlbum {
 	matches := foobarItem.FindStringSubmatch(query)
 	if len(matches) == 0 {
 		return artistAlbum{}

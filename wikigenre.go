@@ -16,6 +16,7 @@ import (
 	"github.com/franela/goreq"
 )
 
+// ErrNoGenres is returned if scraping yields no genres.
 var ErrNoGenres = fmt.Errorf("couldn't find any genres")
 
 func usage() {
@@ -72,8 +73,6 @@ func artistAlbumsFromCLI(args []string) []artistAlbum {
 	return result
 }
 
-var foobarItem = regexp.MustCompile(`(?:(.+) - )?\[(.+?)?(?: CD\d+)?(?: #\d+)?\]`)
-
 // Read foobar2k items from stdin.
 func artistAlbumsFromStdin() ([]artistAlbum, error) {
 	s := bufio.NewScanner(os.Stdin)
@@ -98,8 +97,10 @@ func artistAlbumsFromStdin() ([]artistAlbum, error) {
 	return artistAlbums, nil
 }
 
+var reFoobar2kItem = regexp.MustCompile(`(?:(.+) - )?\[(.+?)?(?: CD\d+)?(?: #\d+)?\]`)
+
 func parseFoobar2kItem(item string) artistAlbum {
-	matches := foobarItem.FindStringSubmatch(item)
+	matches := reFoobar2kItem.FindStringSubmatch(item)
 	if len(matches) == 0 {
 		return artistAlbum{}
 	}
@@ -163,7 +164,7 @@ func multipleAlbumGenres(as []artistAlbum) ([][]string, []error) {
 // least one of artist or album must be given.
 func AlbumGenres(artist, album string) ([]string, error) {
 	for _, variant := range searchVariants(artist, album) {
-		gs, err := genres(variant)
+		gs, err := albumGenres(variant)
 		if err != nil {
 			return nil, err
 		}
@@ -189,8 +190,30 @@ func searchVariants(artist, album string) []string {
 	return variants
 }
 
-func genres(query string) ([]string, error) {
-	// Search page via API.
+func albumGenres(query string) ([]string, error) {
+	searchResp, err := searchWikipedia(query)
+	if err != nil {
+		return nil, err
+	}
+	// Bail if nothing's found.
+	if len(searchResp.URIs) == 0 {
+		return nil, nil
+	}
+
+	uri := searchResp.URIs[0] // TODO: check other URIs as well
+	resp, err := wikipediaPage(uri)
+	if resp.Body != nil {
+		defer resp.Body.Close()
+	}
+
+	doc, err := goquery.NewDocumentFromResponse(resp.Response)
+	if err != nil {
+		return nil, err
+	}
+	return scrapeGenres(doc), nil
+}
+
+func searchWikipedia(query string) (searchResponse, error) {
 	resp, err := goreq.Request{
 		Uri: "https://en.wikipedia.org/w/api.php",
 		QueryString: url.Values{
@@ -200,55 +223,16 @@ func genres(query string) ([]string, error) {
 		UserAgent: "Wikigenre",
 	}.Do()
 	if err != nil {
-		return nil, err
+		return searchResponse{}, err
 	}
 	if !isResponseOK(resp) {
-		return nil, fmt.Errorf("search on Wikipedia failed, HTTP status %s", resp.Status)
+		return searchResponse{}, fmt.Errorf("search on Wikipedia failed, HTTP status %s", resp.Status)
+	}
+	if resp.Body != nil {
+		defer resp.Body.Close()
 	}
 
-	// Decode response.
-	var jsonResp []interface{}
-	err = resp.Body.FromJsonTo(&jsonResp)
-	if err != nil {
-		return nil, err
-	}
-	searchResp, err := decodeResponse(jsonResp)
-	if err != nil {
-		return nil, err
-	}
-
-	// Bail if nothing's found.
-	if len(searchResp.URIs) == 0 {
-		return []string{}, nil
-	}
-
-	// Open Wikipedia page from the first search results.
-	uri := searchResp.URIs[0] // TODO: check other URIs as well
-	resp, err = goreq.Request{
-		Uri: uri,
-	}.Do()
-	if err != nil {
-		return nil, err
-	}
-	if !isResponseOK(resp) {
-		return nil, fmt.Errorf("failed to open Wikipedia page %s, HTTP status %s", uri, resp.Status)
-	}
-
-	doc, err := goquery.NewDocumentFromResponse(resp.Response)
-	if err != nil {
-		return nil, err
-	}
-
-	// Scrape genres.
-	var result []string
-	doc.Find("table.haudio td.category>a").Each(genresFromSelection(&result))
-	if len(result) > 0 {
-		return result, nil
-	}
-	doc.Find("table.infobox th>a").FilterFunction(func(i int, link *goquery.Selection) bool {
-		return link.Text() == "Genre"
-	}).Parent().Parent().Find("td>a").Each(genresFromSelection(&result))
-	return result, nil
+	return decodeSearchResponse(resp)
 }
 
 // isResponseOK returns false if response code is between 400 and 599.
@@ -263,26 +247,32 @@ type searchResponse struct {
 	URIs        []string
 }
 
-func decodeResponse(jsonResp []interface{}) (searchResponse, error) {
-	err := func(o interface{}) error {
+func decodeSearchResponse(r *goreq.Response) (searchResponse, error) {
+	assertError := func(o interface{}) error {
 		return fmt.Errorf("unable to assert %#v", o)
+	}
+
+	var jsonResp []interface{}
+	err := r.Body.FromJsonTo(&jsonResp)
+	if err != nil {
+		return searchResponse{}, err
 	}
 
 	query, ok := jsonResp[0].(string)
 	if !ok {
-		return searchResponse{}, err(jsonResp[0])
+		return searchResponse{}, assertError(jsonResp[0])
 	}
 	suggestions, ok := interfaceToStringSlice(jsonResp[1])
 	if !ok {
-		return searchResponse{}, err(jsonResp[1])
+		return searchResponse{}, assertError(jsonResp[1])
 	}
 	snippets, ok := interfaceToStringSlice(jsonResp[2])
 	if !ok {
-		return searchResponse{}, err(jsonResp[2])
+		return searchResponse{}, assertError(jsonResp[2])
 	}
 	urls, ok := interfaceToStringSlice(jsonResp[3])
 	if !ok {
-		return searchResponse{}, err(jsonResp[3])
+		return searchResponse{}, assertError(jsonResp[3])
 	}
 
 	return searchResponse{query, suggestions, snippets, urls}, nil
@@ -303,7 +293,36 @@ func interfaceToStringSlice(obj interface{}) ([]string, bool) {
 	return result, true
 }
 
-func genresFromSelection(result *[]string) func(int, *goquery.Selection) {
+func wikipediaPage(uri string) (*goreq.Response, error) {
+	resp, err := goreq.Request{
+		Uri: uri,
+	}.Do()
+	if err != nil {
+		return nil, err
+	}
+	if !isResponseOK(resp) {
+		return nil, fmt.Errorf("failed to open Wikipedia page %s, HTTP status %s", uri, resp.Status)
+	}
+	return resp, nil
+}
+
+func scrapeGenres(doc *goquery.Document) []string {
+	var result []string
+	doc.Find("table.haudio td.category>a").
+		Each(textFromSelection(&result))
+	if len(result) > 0 {
+		return result
+	}
+	doc.Find("table.infobox th>a").
+		FilterFunction(func(i int, link *goquery.Selection) bool { return link.Text() == "Genre" }).
+		Parent().
+		Parent().
+		Find("td>a").
+		Each(textFromSelection(&result))
+	return result
+}
+
+func textFromSelection(result *[]string) func(int, *goquery.Selection) {
 	return func(i int, link *goquery.Selection) {
 		*result = append(*result, title(link.Text()))
 	}

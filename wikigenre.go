@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/url"
@@ -207,11 +208,11 @@ func albumGenres(query string) ([]string, error) {
 		return nil, err
 	}
 	// Bail if nothing's found.
-	if len(searchResp.URIs) == 0 {
+	if len(searchResp.uris) == 0 {
 		return nil, nil
 	}
 
-	uri := searchResp.URIs[0] // TODO: check other URIs as well
+	uri := searchResp.uris[0] // TODO: check other URIs as well
 	resp, err := wikipediaPage(uri)
 	if resp.Body != nil {
 		defer resp.Body.Close()
@@ -225,6 +226,8 @@ func albumGenres(query string) ([]string, error) {
 }
 
 func searchWikipedia(query string) (searchResponse, error) {
+	var sr searchResponse
+
 	resp, err := goreq.Request{
 		Uri: "https://en.wikipedia.org/w/api.php",
 		QueryString: url.Values{
@@ -234,16 +237,20 @@ func searchWikipedia(query string) (searchResponse, error) {
 		UserAgent: "Wikigenre",
 	}.Do()
 	if err != nil {
-		return searchResponse{}, err
+		return sr, err
 	}
 	if !isResponseOK(resp) {
-		return searchResponse{}, fmt.Errorf("search on Wikipedia failed, HTTP status %s", resp.Status)
+		return sr, fmt.Errorf("search on Wikipedia failed, HTTP status %s", resp.Status)
 	}
 	if resp.Body != nil {
 		defer resp.Body.Close()
 	}
 
-	return decodeSearchResponse(resp)
+	dec := json.NewDecoder(resp.Body)
+	if err := dec.Decode(&sr); err != nil {
+		return sr, err
+	}
+	return sr, nil
 }
 
 // isResponseOK returns false if response code is between 400 and 599.
@@ -252,41 +259,45 @@ func isResponseOK(r *goreq.Response) bool {
 }
 
 type searchResponse struct {
-	Query       string
-	Suggestions []string
-	Snippets    []string
-	URIs        []string
+	query       string
+	suggestions []string
+	snippets    []string
+	uris        []string
 }
 
-func decodeSearchResponse(r *goreq.Response) (searchResponse, error) {
+func (sr *searchResponse) UnmarshalJSON(data []byte) error {
 	assertError := func(o interface{}) error {
 		return fmt.Errorf("unable to assert %#v", o)
 	}
 
 	var jsonResp []interface{}
-	err := r.Body.FromJsonTo(&jsonResp)
+	err := json.Unmarshal(data, &jsonResp)
 	if err != nil {
-		return searchResponse{}, err
+		return err
 	}
 
 	query, ok := jsonResp[0].(string)
 	if !ok {
-		return searchResponse{}, assertError(jsonResp[0])
+		return assertError(jsonResp[0])
 	}
 	suggestions, ok := interfaceToStringSlice(jsonResp[1])
 	if !ok {
-		return searchResponse{}, assertError(jsonResp[1])
+		return assertError(jsonResp[1])
 	}
 	snippets, ok := interfaceToStringSlice(jsonResp[2])
 	if !ok {
-		return searchResponse{}, assertError(jsonResp[2])
+		return assertError(jsonResp[2])
 	}
-	urls, ok := interfaceToStringSlice(jsonResp[3])
+	uris, ok := interfaceToStringSlice(jsonResp[3])
 	if !ok {
-		return searchResponse{}, assertError(jsonResp[3])
+		return assertError(jsonResp[3])
 	}
 
-	return searchResponse{query, suggestions, snippets, urls}, nil
+	sr.query = query
+	sr.suggestions = suggestions
+	sr.snippets = snippets
+	sr.uris = uris
+	return nil
 }
 
 func interfaceToStringSlice(obj interface{}) ([]string, bool) {

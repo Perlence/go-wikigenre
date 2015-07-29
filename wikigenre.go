@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"regexp"
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/franela/goreq"
@@ -22,9 +24,21 @@ import (
 var ErrNoGenres = fmt.Errorf("couldn't find any genres")
 
 var colorStderr = ansicolor.NewAnsiColorWriter(os.Stderr)
+var logger = log.New(colorStderr, "", log.LstdFlags)
+
+var Verbose = false
+
+const verboseUsage = "print URIs of HTTP requests"
+
+func init() {
+	flag.BoolVar(&Verbose, "v", false, verboseUsage)
+
+	goreq.SetConnectTimeout(10 * time.Second)
+}
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: go-wikigenre [-h] "[ARTIST - ]ALBUM"( "[ARTIST - ]ALBUM")*`)
+	fmt.Fprintln(os.Stderr, `usage: go-wikigenre [-h] [-v] "[ARTIST - ]ALBUM"( "[ARTIST - ]ALBUM")*`)
+	fmt.Fprintln(os.Stderr, `  -v=false: `+verboseUsage)
 	os.Exit(2)
 }
 
@@ -316,6 +330,9 @@ func interfaceToStringSlice(obj interface{}) ([]string, bool) {
 }
 
 func wikipediaPage(uri string) (*goreq.Response, error) {
+	if Verbose {
+		logger.Println(uri)
+	}
 	resp, err := goreq.Request{
 		Uri: uri,
 	}.Do()

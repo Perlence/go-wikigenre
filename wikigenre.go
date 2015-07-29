@@ -347,7 +347,7 @@ func wikipediaPage(uri string) (*goreq.Response, error) {
 
 func scrapeGenres(doc *goquery.Document) []string {
 	var result []string
-	doc.Find("table.haudio td.category>a").
+	doc.Find("table.haudio td.category a").
 		Each(textFromSelection(&result))
 	if len(result) > 0 {
 		return result
@@ -356,7 +356,7 @@ func scrapeGenres(doc *goquery.Document) []string {
 		FilterFunction(func(i int, link *goquery.Selection) bool { return link.Text() == "Genre" }).
 		Parent().
 		Parent().
-		Find("td>a").
+		Find("td a").
 		Each(textFromSelection(&result))
 	return result
 }

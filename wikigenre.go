@@ -143,13 +143,15 @@ func parseFoobar2kItem(item string) artistAlbum {
 
 func multipleAlbumGenres(as []artistAlbum) ([][]string, []error) {
 	var wg sync.WaitGroup
-	m := &sync.Mutex{}
+	m := new(sync.Mutex)
 	wg.Add(len(as))
 	uniqueArtistAlbumMap := make(map[artistAlbum][]string)
 	var errs []error
 	for _, aa := range as {
-		go func(q artistAlbum) {
+		q := aa
+		go func() {
 			defer func() {
+				m.Unlock()
 				wg.Done()
 				runtime.Gosched()
 			}()
@@ -162,20 +164,18 @@ func multipleAlbumGenres(as []artistAlbum) ([][]string, []error) {
 			_, ok := uniqueArtistAlbumMap[q]
 			if ok {
 				// Don't query if query is already in process.
-				m.Unlock()
 				return
 			}
 			uniqueArtistAlbumMap[q] = nil
 			m.Unlock()
 
 			gs, err := AlbumGenres(q.artist, q.album)
+			m.Lock()
 			if err != nil {
 				errs = append(errs, fmt.Errorf("error finding genres for %s: %s", q.both, err))
 			}
-			m.Lock()
 			uniqueArtistAlbumMap[q] = gs
-			m.Unlock()
-		}(aa)
+		}()
 	}
 	wg.Wait()
 

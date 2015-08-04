@@ -14,10 +14,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/PuerkitoBio/goquery"
-	"github.com/franela/goreq"
-	"github.com/shiena/ansicolor"
-	"github.com/ttacon/chalk"
+	"github.com/Perlence/go-wikigenre/Godeps/_workspace/src/github.com/PuerkitoBio/goquery"
+	"github.com/Perlence/go-wikigenre/Godeps/_workspace/src/github.com/franela/goreq"
+	"github.com/Perlence/go-wikigenre/Godeps/_workspace/src/github.com/shiena/ansicolor"
+	"github.com/Perlence/go-wikigenre/Godeps/_workspace/src/github.com/ttacon/chalk"
 )
 
 // ErrNoGenres is returned if scraping yields no genres.

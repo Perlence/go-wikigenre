@@ -1,0 +1,32 @@
+{
+	"ImportPath": "github.com/Perlence/go-wikigenre",
+	"GoVersion": "go1.4.2",
+	"Deps": [
+		{
+			"ImportPath": "github.com/PuerkitoBio/goquery",
+			"Comment": "v0.3.2-79-gb444041",
+			"Rev": "b4440419d81240f8451a505b2f806c853bc2befc"
+		},
+		{
+			"ImportPath": "github.com/andybalholm/cascadia",
+			"Rev": "6122e68c2642b7b75c538a63b15168c6c80fb757"
+		},
+		{
+			"ImportPath": "github.com/franela/goreq",
+			"Rev": "8f5efc273865ec2e0d51aef6f628e51c4103984c"
+		},
+		{
+			"ImportPath": "github.com/shiena/ansicolor",
+			"Rev": "a5e2b567a4dd6cc74545b8a4f27c9d63b9e7735b"
+		},
+		{
+			"ImportPath": "github.com/ttacon/chalk",
+			"Comment": "v0.1-2-ge66ca4d",
+			"Rev": "e66ca4d608eb6dc36d012bceeb08ef9f379134c1"
+		},
+		{
+			"ImportPath": "golang.org/x/net/html",
+			"Rev": "446d52dd4018303a13b36097e26d0888aca5d6ef"
+		}
+	]
+}

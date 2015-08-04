@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"regexp"
@@ -26,6 +27,7 @@ var ErrNoGenres = fmt.Errorf("couldn't find any genres")
 var colorStderr = ansicolor.NewAnsiColorWriter(os.Stderr)
 var logger = log.New(colorStderr, "", log.LstdFlags)
 
+// Log requests to Wikipedia.
 var Verbose = false
 
 const verboseUsage = "print URIs of HTTP requests"
@@ -40,6 +42,16 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `usage: go-wikigenre [-h] [-v] "[ARTIST - ]ALBUM"( "[ARTIST - ]ALBUM")*`)
 	fmt.Fprintln(os.Stderr, `  -v=false: `+verboseUsage)
 	os.Exit(2)
+}
+
+// Prevent data races in goreq the hard way.
+// Passing cookiejar to goreq.Request will create a new instance of http.Client,
+// so Do method won't write into CheckRedirect field of goreq.DefaultClient.
+type dummyCookiejar struct{}
+
+func (c dummyCookiejar) SetCookies(u *url.URL, cookies []*http.Cookie) {}
+func (c dummyCookiejar) Cookies(u *url.URL) []*http.Cookie {
+	return nil
 }
 
 func main() {
@@ -249,6 +261,7 @@ func searchWikipedia(query string) (searchResponse, error) {
 			"search": {query},
 		},
 		UserAgent: "Wikigenre",
+		CookieJar: dummyCookiejar{},
 	}.Do()
 	if err != nil {
 		return sr, err
@@ -334,7 +347,8 @@ func wikipediaPage(uri string) (*goreq.Response, error) {
 		logger.Println(uri)
 	}
 	resp, err := goreq.Request{
-		Uri: uri,
+		Uri:       uri,
+		CookieJar: dummyCookiejar{},
 	}.Do()
 	if err != nil {
 		return nil, err
